@@ -29,6 +29,17 @@ function Root(): JSX.Element {
   return <App />;
 }
 
+/* Installable PWA: the service worker is what turns the web app into a
+ * zero-store Android/desktop install. Development skips it so hot reloads
+ * never fight a cache. */
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {
+      /* Offline support is progressive enhancement; never block boot. */
+    });
+  });
+}
+
 const container = document.getElementById('root');
 if (!container) throw new Error('Root container #root not found');
 
