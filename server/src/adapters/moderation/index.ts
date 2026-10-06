@@ -308,3 +308,64 @@ export function addHashToBlocklist(hash: string, hashType: 'sha256' | 'phash', c
   `).run(hash.toLowerCase(), hashType, category, severity, source, nowMs());
   blocklist.invalidate();
 }
+
+/* ─────────────────────────── Public abuse reports ─────────────────────────── */
+
+/**
+ * A report filed by someone with no account — a visitor who saw a shared link,
+ * a store reviewer, a journalist. Honeypot and rate limiting happen in the
+ * route layer; here we simply persist what survived them. The raw IP is never
+ * stored, only its keyed hash, matching the rest of the audit trail.
+ */
+export function createPublicReport(input: {
+  reason: string;
+  details?: string | null;
+  contact?: string | null;
+  ipHash?: string | null;
+}): string {
+  const now = nowMs();
+  const id = newId();
+  db().prepare(`
+    INSERT INTO public_reports (id, reason, details, contact, ip_hash, status, created_at)
+    VALUES (?, ?, ?, ?, ?, 'open', ?)
+  `).run(
+    id,
+    input.reason,
+    input.details?.slice(0, 2000) ?? null,
+    input.contact?.slice(0, 254) ?? null,
+    input.ipHash ?? null,
+    now,
+  );
+  audit({
+    action: 'report.filed_public',
+    target: { type: 'public_report', id },
+    severity: 'warning',
+  });
+  return id;
+}
+
+export function listPublicReports(status?: string, limit = 50) {
+  const params: unknown[] = [];
+  let sql = 'SELECT * FROM public_reports';
+  if (status) { sql += ' WHERE status = ?'; params.push(status); }
+  sql += ' ORDER BY created_at DESC LIMIT ?';
+  params.push(Math.min(limit, 200));
+  return db().prepare(sql).all(...params) as Record<string, unknown>[];
+}
+
+export function resolvePublicReport(input: {
+  reportId: string;
+  status: string;
+  resolution?: string | null;
+}): void {
+  const res = db()
+    .prepare('UPDATE public_reports SET status = ?, resolved_at = ?, resolution = ? WHERE id = ?')
+    .run(input.status, nowMs(), input.resolution?.slice(0, 2000) ?? null, input.reportId);
+  if (!res.changes) throw new Error('Report not found');
+  audit({
+    action: 'report.resolved_public',
+    target: { type: 'public_report', id: input.reportId },
+    meta: { status: input.status },
+    severity: 'warning',
+  });
+}

@@ -622,6 +622,47 @@ const MIGRATIONS: { version: number; name: string; sql: string[] }[] = [
       `CREATE INDEX IF NOT EXISTS idx_users_presence ON users(presence) WHERE presence = 'online'`,
     ],
   },
+
+  /* ─────────────────────────────────────────────────────────────────────
+     v3 — public abuse reports. Visitors who never created an account still
+     need an abuse path (store listing, shared link, press page), and the
+     in-app reports table has a NOT NULL reporter_id on purpose: anonymous
+     rows there would pollute the authenticated moderation queue and its
+     audit chain. So the public form gets its own small table, its own
+     honeypot-guarded endpoint, and its own resolution flow in the admin UI.
+     ───────────────────────────────────────────────────────────────────── */
+  {
+    version: 3,
+    name: 'public_reports',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS public_reports (
+        id          TEXT PRIMARY KEY,
+        reason      TEXT NOT NULL,
+        details     TEXT,
+        contact     TEXT,
+        ip_hash     TEXT,
+        status      TEXT NOT NULL DEFAULT 'open',
+        created_at  INTEGER NOT NULL,
+        resolved_at INTEGER,
+        resolution  TEXT
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_public_reports_open ON public_reports(status, created_at DESC)`,
+    ],
+  },
+
+  /* ─────────────────────────────────────────────────────────────────────
+     v4 — devices.device_key. Device row ids became a server-derived hash of
+     (user, client deviceId) so two accounts sharing one physical device get
+     separate rows and clients cannot squat on row ids; the raw client id is
+     preserved here purely for display in the sessions list.
+     ───────────────────────────────────────────────────────────────────── */
+  {
+    version: 4,
+    name: 'device_key_column',
+    sql: [
+      `ALTER TABLE devices ADD COLUMN device_key TEXT`,
+    ],
+  },
 ];
 
 function migrate(d: DB): void {

@@ -27,7 +27,8 @@ import {
 import { queryAudit, pruneAudit } from '../services/audit.js';
 import { getFlags, publicConfig, setFlags } from '../services/features.js';
 import {
-  addHashToBlocklist, createReport, invalidateBlocklist, listReports, resolveReport,
+  addHashToBlocklist, createReport, invalidateBlocklist, listPublicReports, listReports,
+  resolvePublicReport, resolveReport,
 } from '../adapters/moderation/index.js';
 import { MEDIA_POLICY, runDueJobs } from '../services/media.js';
 import { callAdaptersStatus } from '../adapters/calls/index.js';
@@ -91,9 +92,25 @@ export function adminRoutes(app: FastifyInstance): void {
     noStore(reply);
     requireRole(req, 'moderator');
     const q = req.query as { status?: string; limit?: string; cursor?: string };
-    return reply.send({
-      reports: listReports(q.status, Math.min(Number(q.limit ?? 50) || 50, 200), q.cursor ? Number(q.cursor) : undefined),
-    });
+    const page = listReports(q.status, Math.min(Number(q.limit ?? 50) || 50, 200), q.cursor ? Number(q.cursor) : undefined);
+    // Public-form reports share this queue so moderators see one inbox. They
+    // carry no reporter (the filer had no account); the target is the report
+    // row itself.
+    const pub = listPublicReports(q.status).map((r) => ({
+      id: r.id,
+      reporterId: 'public-form',
+      targetType: 'public' as const,
+      targetId: String(r.id),
+      reason: r.reason,
+      details: r.details ?? null,
+      status: r.status,
+      createdAt: r.created_at,
+      resolvedAt: r.resolved_at ?? null,
+      resolvedBy: null,
+      resolution: r.resolution ?? null,
+    }));
+    const merged = [...page.items, ...pub].sort((a, b) => Number(b.createdAt) - Number(a.createdAt));
+    return reply.send({ reports: { ...page, items: merged } });
   });
 
   app.post('/admin/reports/:id/resolve', { config: { rateLimit: rateLimitConfig('admin') } }, async (req, reply) => {
@@ -104,12 +121,17 @@ export function adminRoutes(app: FastifyInstance): void {
       resolution: z.string().min(4).max(1000).optional(),
     }).strict().parse(await req.body);
 
-    resolveReport({
-      reportId: id,
-      moderatorId: auth.userId,
-      status: body.status,
-      resolution: body.resolution ?? null,
-    });
+    try {
+      resolveReport({
+        reportId: id,
+        moderatorId: auth.userId,
+        status: body.status,
+        resolution: body.resolution ?? null,
+      });
+    } catch (e) {
+      if (String((e as Error).message) !== 'Report not found') throw e;
+      resolvePublicReport({ reportId: id, status: body.status, resolution: body.resolution ?? null });
+    }
     return reply.send({ ok: true, status: body.status });
   });
 

@@ -659,7 +659,7 @@ export type ReportReason = (typeof REPORT_REASONS)[number];
 export interface Report {
   id: Id;
   reporterId: Id;
-  targetType: 'user' | 'message' | 'conversation' | 'attachment';
+  targetType: 'user' | 'message' | 'conversation' | 'attachment' | 'public';
   targetId: string;
   reason: ReportReason;
   details: string | null;

@@ -15,7 +15,8 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -31,6 +32,7 @@ import { conversationRoutes } from './routes/conversations.js';
 import { messageRoutes } from './routes/messages.js';
 import { mediaRoutes } from './routes/media.js';
 import { callRoutes } from './routes/calls.js';
+import { publicRoutes } from './routes/public.js';
 import { adminRoutes } from './routes/admin.js';
 import { healthRoutes } from './routes/health.js';
 import { startBackgroundJobs, stopBackgroundJobs } from './jobs/index.js';
@@ -133,6 +135,19 @@ const BANNER = String.raw`
   anonymous, by design
 `;
 
+/* Google Analytics is opt-in per deployment: the snippet only exists in the
+ * served HTML when VESPER_GA_ID is set, and the CSP only opens up for the two
+ * Google origins in that case. No id, no third-party script, no exception.
+ * The inline bootstrap is allowed by a sha256 CSP hash computed from the exact
+ * string that gets spliced in — never by 'unsafe-inline'. */
+const GA_ID = process.env.VESPER_GA_ID?.trim() || null;
+const GA_INLINE = GA_ID
+  ? `window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag('js',new Date());gtag('config','${GA_ID}',{anonymize_ip:true});`
+  : null;
+const GA_INLINE_CSP = GA_INLINE
+  ? `'sha256-${createHash('sha256').update(GA_INLINE).digest('base64')}'`
+  : null;
+
 export async function buildServer() {
   /* ── 1. Data directories ─────────────────────────────────────── */
   const dataDir = resolve(process.cwd(), 'data');
@@ -202,11 +217,13 @@ export async function buildServer() {
         // bundle we serve ourselves; a CSP this strict means a stored XSS in a
         // message body cannot load an attacker script.
         defaultSrc: ["'none'"],
-        scriptSrc: ["'self'"],
+        scriptSrc: GA_ID ? ["'self'", 'https://www.googletagmanager.com', GA_INLINE_CSP as string] : ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:', 'blob:'],
         mediaSrc: ["'self'", 'blob:'],
-        connectSrc: ["'self'", 'ws:', 'wss:', 'blob:'],
+        connectSrc: GA_ID
+          ? ["'self'", 'ws:', 'wss:', 'blob:', 'https://www.google-analytics.com']
+          : ["'self'", 'ws:', 'wss:', 'blob:'],
         fontSrc: ["'self'", 'data:'],
         frameSrc: ["'none'"],
         objectSrc: ["'none'"],
@@ -281,10 +298,47 @@ export async function buildServer() {
   // the web client's index.html when a client build is present, everything
   // else gets the JSON error envelope.
   const clientDist = locateClientDist();
+
+  // The shell HTML is read once at boot so the analytics snippet (opt-in via
+  // VESPER_GA_ID) can be spliced in without touching response streams in a
+  // per-request hook. The placeholder is always removed — unset means the
+  // served page contains no analytics code at all.
+  let indexHtml: string | null = null;
+  if (clientDist) {
+    try {
+      const raw = readFileSync(join(clientDist, 'index.html'), 'utf8');
+      const snippet = GA_ID
+        ? `<script async src="https://www.googletagmanager.com/gtag/js?id=${GA_ID}"></script>\n<script>${GA_INLINE}</script>`
+        : '';
+      indexHtml = raw.replace('<!--VESPER_GA-->', snippet);
+    } catch {
+      indexHtml = null;
+    }
+  }
+
+  if (indexHtml) {
+    // Explicit '/' route beats the static plugin's wildcard, guaranteeing the
+    // analytics-aware copy of the shell is what browsers receive.
+    app.get('/', async (_req, reply) => {
+      void reply
+        .header('Content-Type', 'text/html; charset=utf-8')
+        .header('Cache-Control', 'no-cache')
+        .send(indexHtml);
+    });
+  }
+
   app.setNotFoundHandler((req, reply) => {
     const isApi = req.url.startsWith('/api') || req.url.startsWith('/realtime');
-    if (clientDist && !isApi && req.method === 'GET') {
-      return reply.sendFile('index.html');
+    const wantsHtml = String(req.headers.accept ?? '').includes('text/html');
+    if (clientDist && indexHtml && !isApi && req.method === 'GET' && wantsHtml) {
+      // SPA fallback with a truthful status: crawlers and link checkers must
+      // see 404 for paths that do not exist, while humans get the app shell
+      // which renders its own not-found view from the pathname.
+      return void reply
+        .status(404)
+        .header('Content-Type', 'text/html; charset=utf-8')
+        .header('Cache-Control', 'no-store')
+        .send(indexHtml);
     }
     void reply.status(404).send({
       error: { code: 'not_found', message: `No route matches ${req.method} ${req.url}` },
@@ -300,6 +354,7 @@ export async function buildServer() {
   mediaRoutes(app);
   callRoutes(app);
   adminRoutes(app);
+  publicRoutes(app);
   registerRealtimeRoutes(app);
 
   /* ── 9. Static client (same-origin in every environment) ─────── */
