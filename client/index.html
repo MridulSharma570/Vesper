@@ -9,6 +9,18 @@
     <meta name="description" content="Vesper — anonymous messaging. No name, no number, no trace." />
     <meta name="referrer" content="no-refer" />
     <title>Vesper</title>
+    <!-- Link-preview / share metadata. Crawlers resolve the relative image
+         against the serving origin, so one build works on every deployment. -->
+    <meta property="og:site_name" content="Vesper" />
+    <meta property="og:title" content="Vesper — anonymous, by design" />
+    <meta property="og:description" content="No name, no number, no trace. Vesper is the messaging app where your identity is yours alone." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Vesper — anonymous, by design" />
+    <meta name="twitter:description" content="No name, no number, no trace. Vesper is the messaging app where your identity is yours alone." />
+    <meta name="twitter:image" content="/og-image.png" />
+    <!--VESPER_GA-->
     <!-- Icons are inlined as data URIs by the build so the app never depends on
          a third-party origin. See brand/ for the source artwork. -->
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
