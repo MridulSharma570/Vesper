@@ -1,0 +1,29 @@
+{
+  "name": "vesper",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Vesper - anonymous, secure, cross-platform messaging (Web, Android, iOS, Windows)",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "workspaces": [
+    "server",
+    "client",
+    "desktop"
+  ],
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run build --workspace server && npm run build --workspace client",
+    "start": "npm run start --workspace server",
+    "test": "npm run test --workspace server",
+    "typecheck": "npm run typecheck --workspace server && npm run typecheck --workspace client",
+    "seed": "npm run seed --workspace server",
+    "android": "node scripts/mobile.mjs android",
+    "ios": "node scripts/mobile.mjs ios",
+    "windows": "node scripts/desktop.mjs",
+    "dist:all": "node scripts/build-all.mjs"
+  },
+  "type": "module"
+}
