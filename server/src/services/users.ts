@@ -164,6 +164,12 @@ export interface CreateUserInput {
   phone?: string | null;
   verified?: boolean;
   oauth?: { provider: string; subject: string; email?: string | null } | null;
+  /**
+   * Staff-tooling only: permit handles from the reserved list (administrator,
+   * owner, support...). Public registration never sets this; the reservation
+   * exists to stop impersonation of the platform by ordinary sign-ups.
+   */
+  allowReserved?: boolean;
   /** Device-generated public identity key (pure-anonymous accounts). */
   identityKey?: string | null;
 }
@@ -175,7 +181,7 @@ export function createUser(input: CreateUserInput = {}): UserRow {
 
   let handle = input.handle?.replace(/^@/, '').trim().toLowerCase() ?? null;
   if (handle) {
-    if (!isValidHandle(handle)) {
+    if (!isValidHandle(handle, { allowReserved: input.allowReserved === true })) {
       throw err.badRequest(
         'That handle is not allowed. Use 3-32 lowercase letters, numbers, underscores, or single hyphens/dots as separators.',
         'invalid_handle',

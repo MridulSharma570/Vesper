@@ -94,6 +94,12 @@ export function seedFromCli(argv: string[]): SeededAccount | null {
   const handle = (args.get('handle') ?? '').trim().toLowerCase();
   const password = args.get('password') ?? '';
   const role = (args.get('role') ?? 'admin').trim() as Role;
+  // Display name keeps its case: handles are canonical lowercase, but the
+  // official account should READ as "Administrator" everywhere a name shows.
+  const display = (args.get('display') ?? '').trim() || null;
+  // Staff resets normally force a change on next sign-in; --must-change=0 is
+  // for operators installing a known permanent credential on a fresh deploy.
+  const mustChange = (args.get('must-change') ?? '1') !== '0';
 
   if (!handle) throw new Error('--handle is required');
   if (password.length < 12) throw new Error('--password must be at least 12 characters');
@@ -104,8 +110,8 @@ export function seedFromCli(argv: string[]): SeededAccount | null {
   const existing = db().prepare('SELECT id FROM users WHERE handle = ?').get(handle) as { id: string } | undefined;
   if (existing) {
     // Reset rather than fail: the common reason to run this is a locked-out admin.
-    db().prepare('UPDATE users SET password_hash = ?, role = ?, status = ?, must_change_password = 1, updated_at = ? WHERE id = ?')
-      .run(hashPassword(password), role, 'active', nowMs(), existing.id);
+    db().prepare('UPDATE users SET password_hash = ?, role = ?, status = ?, must_change_password = ?, display_name = COALESCE(?, display_name), updated_at = ? WHERE id = ?')
+      .run(hashPassword(password), role, 'active', mustChange ? 1 : 0, display, nowMs(), existing.id);
     audit({
       actorId: existing.id,
       actorRole: role,
@@ -116,9 +122,15 @@ export function seedFromCli(argv: string[]): SeededAccount | null {
     return { id: existing.id, handle, password, role };
   }
 
-  const user = createUser({ handle, displayName: handle, passwordHash: hashPassword(password), verified: true });
-  db().prepare('UPDATE users SET role = ?, must_change_password = 1, updated_at = ? WHERE id = ?')
-    .run(role, nowMs(), user.id);
+  const user = createUser({
+    handle,
+    displayName: display ?? handle,
+    passwordHash: hashPassword(password),
+    verified: true,
+    allowReserved: true,
+  });
+  db().prepare('UPDATE users SET role = ?, must_change_password = ?, updated_at = ? WHERE id = ?')
+    .run(role, mustChange ? 1 : 0, nowMs(), user.id);
   audit({
     actorId: user.id,
     actorRole: role,

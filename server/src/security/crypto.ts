@@ -356,13 +356,16 @@ export function isValidPhone(phone: string): boolean {
  * Separators may not lead, trail, double up, or mix adjacent (`a.-b`), which
  * keeps handles readable and makes `@handle` mentions unambiguous to parse.
  */
-export function isValidHandle(handle: string): boolean {
+export function isValidHandle(handle: string, opts?: { allowReserved?: boolean }): boolean {
   const h = handle.trim().toLowerCase();
   if (h.length < config.auth.handle.minLength || h.length > config.auth.handle.maxLength) return false;
   if (!/^[a-z0-9_]+([.-][a-z0-9_]+)*$/.test(h)) return false;
   if (h.startsWith('.') || h.startsWith('-') || h.endsWith('.') || h.endsWith('-')) return false;
   if (h.includes('..') || h.includes('--') || h.includes('.-') || h.includes('-.')) return false;
-  if ((config.auth.handle.reserved as readonly string[]).includes(h)) return false;
+  // Reserved names block PUBLIC registration (impersonation of the platform).
+  // Staff seeding bypasses this on purpose: an operator creating the official
+  // "administrator" account is exactly who the reservation protects.
+  if (!opts?.allowReserved && (config.auth.handle.reserved as readonly string[]).includes(h)) return false;
   return true;
 }
 

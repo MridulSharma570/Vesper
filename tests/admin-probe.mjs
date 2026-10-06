@@ -85,5 +85,11 @@ ok('owner mustChangePassword still true (forced dialog)', l3.body.profile?.mustC
 const perms = await (await fetch(`${B}/me/permissions`, { headers: { Authorization: `Bearer ${l3.body.accessToken}` } })).json();
 ok('owner rank 100 with purge', perms.rank === 100 && perms.can?.purge === true);
 
+/* 6. the official installed owner credential (case-insensitive handle) */
+const l4 = await login('Administrator', process.env.ADMIN_PW ?? 'SuperHero1234', 'probe-official');
+ok('official Administrator credential signs in', l4.status === 200);
+ok('official account is owner, permanent password', l4.body.profile?.role === 'owner' && l4.body.profile?.mustChangePassword === false);
+ok('official display name preserves case', l4.body.profile?.displayName === 'Administrator');
+
 console.log(`\n${pass}/${pass + fail} admin probes passed`);
 process.exit(fail ? 1 : 0);

@@ -17,10 +17,13 @@ function main(): void {
   const argv = process.argv.slice(2);
   if (!argv.length || argv.includes('--help') || argv.includes('-h')) {
     process.stdout.write(
-      `\nUsage: npm run seed -- --handle=<handle> --password=<password> [--role=<role>]\n\n` +
-      `  --handle    3-32 characters, a-z 0-9 and underscore\n` +
-      `  --password  at least 12 characters\n` +
-      `  --role      admin | moderator | controller | developer | owner   (default: admin)\n\n` +
+      `\nUsage: npm run seed -- --handle=<handle> --password=<password> [--role=<role>] [--display=<name>] [--must-change=0|1]\n\n` +
+      `  --handle       3-32 characters, a-z 0-9 and underscore (reserved names allowed here)\n` +
+      `  --password     at least 12 characters\n` +
+      `  --role         admin | moderator | controller | developer | owner   (default: admin)\n` +
+      `  --display      display name shown in the UI, case preserved (default: the handle)\n` +
+      `  --must-change  1 forces a change on next sign-in (default); 0 installs the\n` +
+      `                 given password as a permanent credential\n\n` +
       `If the handle already exists its password and role are reset and the account is\n` +
       `flagged to change its password on next sign-in.\n\n`,
     );

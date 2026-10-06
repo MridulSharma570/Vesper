@@ -18,13 +18,25 @@ let pass = 0, fail = 0;
 const ok = (name, cond) => { cond ? pass++ : fail++; console.log(`${cond ? '✓' : '✗'} ${name}`); };
 const dev = (id) => ({ deviceId: id, platform: 'web', appVersion: '1.0.0', osVersion: null, model: null, pushToken: null, pushProvider: 'none' });
 
-/* ── area A: the official admin account does not exist yet ── */
+/* ── area A: official admin credentials (commit: feat admin credentials) ──
+ * Post-change expectations: the installed owner account signs in by handle,
+ * case-insensitively, with the permanent password and no forced-change flag. */
+const adminPw = process.env.ADMIN_PW ?? 'SuperHero1234';
 const login = await fetch(`${B}/auth/login`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ method: 'passkey', handle: 'Administrator', password: 'SuperHero1234', device: dev('baseline-a1') }),
+  body: JSON.stringify({ method: 'passkey', handle: 'Administrator', password: adminPw, device: dev('baseline-a1') }),
 });
-ok('A1 login as Administrator is refused today (401)', login.status === 401);
+const loginBody = login.status === 200 ? await login.json() : null;
+ok('A1 login as Administrator succeeds', login.status === 200 && !!loginBody?.accessToken);
+ok('A2 account is owner with display name Administrator', loginBody?.profile?.role === 'owner' && loginBody?.profile?.displayName === 'Administrator');
+ok('A3 password is permanent (no forced change)', loginBody?.profile?.mustChangePassword === false);
+const loginLower = await fetch(`${B}/auth/login`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ method: 'passkey', handle: 'administrator', password: adminPw, device: dev('baseline-a2') }),
+});
+ok('A4 handle sign-in is case-insensitive', loginLower.status === 200);
 
 /* ── area B: identifier linking endpoints do not exist yet ── */
 const linkStart = await fetch(`${B}/users/me/link/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
@@ -42,16 +54,11 @@ ok('C2 /sitemap.xml today returns HTML (wrong type)', sitemap.status === 200 && 
 const og = await fetch(`${B}/og-image.png`);
 ok('C3 /og-image.png today returns HTML (wrong type)', og.status === 200 && (og.headers.get('content-type') ?? '').includes('text/html'));
 
-/* ── area D: conversation list has no cursor paging today ── */
-// Sign in anonymously to get a token for authenticated reads.
-const reg = await fetch(`${B}/auth/register`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ method: 'device_key', identityKey: `baseline-${Date.now()}`, device: dev('baseline-d1') }),
-});
-const regBody = await reg.json();
-const tok = regBody.accessToken ?? '';
-ok('D0 anonymous sign-in works today', reg.status === 201 && !!tok);
+/* ── area D: conversation list has no cursor paging today ──
+ * Reuses the owner token from area A: the auth rate limiter is a feature, and
+ * a test suite must not burn its budget registering throwaway accounts. */
+const tok = loginBody?.accessToken ?? '';
+ok('D0 token from area A is reusable for reads', !!tok);
 const convs = await fetch(`${B}/conversations?limit=2`, { headers: { Authorization: `Bearer ${tok}` } });
 const convBody = convs.status === 200 ? await convs.json() : null;
 ok('D1 /conversations returns a list today', convs.status === 200 && Array.isArray(convBody?.conversations));
