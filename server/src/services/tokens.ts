@@ -21,7 +21,7 @@ import jwt from 'jsonwebtoken';
 import type { DeviceInfo, Platform, Session } from '../../../shared/types.js';
 import { config } from '../config.js';
 import { db, nowMs } from '../db/index.js';
-import { base64url, randomBytes, sha256Hex } from '../security/crypto.js';
+import { base64url, keyedHash, randomBytes, sha256Hex } from '../security/crypto.js';
 import { newId } from '../lib/ids.js';
 import { err, getUser } from './users.js';
 import { audit } from './audit.js';
@@ -42,6 +42,16 @@ export interface IssuedTokens {
   refreshToken: string;
   session: Session;
   expiresIn: number;
+}
+
+/**
+ * Device rows are keyed per (user, client deviceId), never by the raw client
+ * deviceId alone: two accounts on one physical browser must get two rows, and
+ * a client must not be able to squat on another user's device row by sending
+ * a colliding id. The raw id is kept in devices.device_key for display.
+ */
+function deviceRowId(userId: string, clientId: string): string {
+  return keyedHash(`${userId}:${clientId}`, 'device').slice(0, 26);
 }
 
 const hashToken = (t: string) => sha256Hex(t);
@@ -85,9 +95,10 @@ export function issueTokens(
   const family = newId();
 
   const write = db().transaction(() => {
+    const rowId = deviceRowId(userId, device.deviceId);
     db().prepare(`
-      INSERT INTO devices (id, user_id, platform, app_version, os_version, model, push_token, push_provider, created_at, last_seen_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO devices (id, user_id, device_key, platform, app_version, os_version, model, push_token, push_provider, created_at, last_seen_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(user_id, id) DO UPDATE SET
         platform = excluded.platform,
         app_version = excluded.app_version,
@@ -97,7 +108,7 @@ export function issueTokens(
         push_provider = CASE WHEN excluded.push_token IS NOT NULL THEN excluded.push_provider ELSE devices.push_provider END,
         last_seen_at = excluded.last_seen_at
     `).run(
-      device.deviceId, userId, device.platform, device.appVersion, device.osVersion,
+      rowId, userId, device.deviceId, device.platform, device.appVersion, device.osVersion,
       device.model, device.pushToken, device.pushProvider, now, now,
     );
 
@@ -105,7 +116,7 @@ export function issueTokens(
       INSERT INTO sessions (id, user_id, device_id, token_hash, ip_hash, country, user_agent, created_at, last_active_at, expires_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      sessionId, userId, device.deviceId, hashToken(accessToken),
+      sessionId, userId, rowId, hashToken(accessToken),
       context.ipHash ?? null, context.country ?? null,
       context.userAgent?.slice(0, 256) ?? null,
       now, now, now + Math.max(accessTokenTtl * 1000, refreshTokenTtlMs),
@@ -230,10 +241,10 @@ function issueTokensIntoFamily(
   `).run(newId(), userId, sessionId, hashToken(refreshToken), family, now, now + config.auth.refreshTokenTtlDays * 86_400_000);
 
   db().prepare(`
-    INSERT INTO devices (id, user_id, platform, app_version, os_version, model, push_token, push_provider, created_at, last_seen_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO devices (id, user_id, device_key, platform, app_version, os_version, model, push_token, push_provider, created_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id, id) DO UPDATE SET last_seen_at = excluded.last_seen_at, app_version = excluded.app_version
-  `).run(device.deviceId, userId, device.platform, device.appVersion, device.osVersion, device.model, device.pushToken, device.pushProvider, now, now);
+  `).run(deviceRowId(userId, device.deviceId), userId, device.deviceId, device.platform, device.appVersion, device.osVersion, device.model, device.pushToken, device.pushProvider, now, now);
 
   if (context.ipHash) {
     db().prepare('UPDATE sessions SET ip_hash = ?, country = ?, user_agent = ? WHERE id = ?')
@@ -302,7 +313,7 @@ export function sessionIsLive(sessionId: string): boolean {
 export function listSessions(userId: string, currentSessionId?: string): Session[] {
   const rows = db()
     .prepare(
-      `SELECT s.*, d.platform, d.app_version, d.os_version, d.model, d.id AS did
+      `SELECT s.*, d.platform, d.app_version, d.os_version, d.model, d.id AS did, d.device_key AS dkey
          FROM sessions s LEFT JOIN devices d ON d.id = s.device_id AND d.user_id = s.user_id
         WHERE s.user_id = ?
         ORDER BY s.last_active_at DESC LIMIT 100`,
@@ -313,7 +324,7 @@ export function listSessions(userId: string, currentSessionId?: string): Session
     id: String(r.id),
     userId: String(r.user_id),
     device: {
-      deviceId: String(r.did ?? r.device_id ?? ''),
+      deviceId: String(r.dkey ?? r.did ?? r.device_id ?? ''),
       platform: (r.platform as Platform) ?? 'unknown',
       appVersion: String(r.app_version ?? ''),
       osVersion: (r.os_version as string | null) ?? null,
