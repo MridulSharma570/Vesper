@@ -22,7 +22,7 @@ import { spawnSync } from 'node:child_process';
 
 import { config, NODE_ENV } from './config.js';
 import { closeDb, db, nowMs } from './db/index.js';
-import { errorHandler, BODY_LIMIT, REDACT } from './middleware/index.js';
+import { errorHandler, BODY_LIMIT, REDACT, TEST_NO_RATELIMIT } from './middleware/index.js';
 import { registerRealtimeRoutes } from './realtime/ws.js';
 import { closeAll, connectionCount, onlineUserCount, sweepConnections } from './realtime/hub.js';
 import { authRoutes } from './routes/auth.js';
@@ -245,14 +245,20 @@ export async function buildServer() {
 
   await app.register(rateLimit, {
     global: true,
-    max: config.rateLimits.global.max,
+    max: TEST_NO_RATELIMIT ? 1_000_000 : config.rateLimits.global.max,
     timeWindow: config.rateLimits.global.windowMs,
     // A Redis store can be dropped in for multi-instance deployments; the
     // in-memory default is correct for a single node.
     allowList: (req) => String(req.headers['user-agent'] ?? '').includes('VesperHealthcheck'),
-    errorResponseBuilder: () => ({
-      error: { code: 'rate_limited', message: 'Too many requests. Please slow down.' },
-    }),
+    // Must be a real Error carrying statusCode 429: the plugin throws whatever
+    // this returns, and a plain object reaches the error handler status-less —
+    // which used to answer rate-limited clients with a 500 and a CRITICAL
+    // audit row. The error handler maps statusCode 429 to the proper response.
+    errorResponseBuilder: () =>
+      Object.assign(new Error('Too many requests. Please slow down.'), {
+        statusCode: 429,
+        code: 'rate_limited',
+      }),
   });
 
   await app.register(websocket, {

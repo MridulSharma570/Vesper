@@ -179,6 +179,7 @@ export function errorHandler(
     });
     return;
   }
+
   if (anyErr?.statusCode === 429) {
     void reply.status(429).send({ error: { code: 'rate_limited', message: 'Too many requests. Please slow down.' } });
     return;
@@ -241,7 +242,19 @@ export function rateKeyGenerator(tier: RateTier) {
   };
 }
 
+/**
+ * Test escape hatch, development only: the e2e and admin suites legitimately
+ * burn the strict auth tier (12/min) in seconds. VESPER_TEST_NO_RATELIMIT=1
+ * lifts every tier so suites can run back-to-back; the flag is ignored in
+ * production, so a misconfigured deploy cannot disable its own protection.
+ */
+export const TEST_NO_RATELIMIT =
+  process.env.NODE_ENV !== 'production' && process.env.VESPER_TEST_NO_RATELIMIT === '1';
+
 export function rateLimitConfig(tier: RateTier) {
+  if (TEST_NO_RATELIMIT) {
+    return { max: 1_000_000, timeWindow: '1 minute', keyGenerator: rateKeyGenerator(tier) };
+  }
   return { ...RATE_TIERS[tier], keyGenerator: rateKeyGenerator(tier) };
 }
 
