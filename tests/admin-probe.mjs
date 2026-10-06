@@ -14,15 +14,33 @@
  * first assertions to hold.
  */
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const B = process.argv[2] ?? 'http://127.0.0.1:8787';
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+/* Self-preparing fixture: this probe changes the moderator password as part
+ * of its assertions, so it seeds a fresh warden on every run instead of
+ * depending on leftover state from the previous one. */
+const wardenPw = randomBytes(15).toString('base64url');
+const seeded = spawnSync('npx', ['tsx', 'src/tools/seed.ts', `--handle=warden`, `--password=${wardenPw}`, '--role=moderator'], {
+  cwd: resolve(root, 'server'),
+  stdio: 'pipe',
+  shell: process.platform === 'win32',
+});
+if (seeded.status !== 0) {
+  console.error('could not seed the warden fixture:', seeded.stderr?.toString() || seeded.stdout?.toString());
+  process.exit(1);
+}
 
 function secret(envName, filePath) {
   if (process.env[envName]) return process.env[envName];
   try { return readFileSync(filePath, 'utf8').trim(); } catch { return ''; }
 }
-const ownerPw = secret('OWNER_PW', '/home/user/probe/owner-pw.txt');
-const wardenPw = secret('WARDEN_PW', '/home/user/probe/warden-pw.txt');
+const ownerPw = secret('OWNER_PW', '/home/user/probe/admin-pw.txt');
 
 const dev = (id) => ({ deviceId: id, platform: 'web', appVersion: '1.0.0', osVersion: null, model: null, pushToken: null, pushProvider: 'none' });
 let pass = 0, fail = 0;
