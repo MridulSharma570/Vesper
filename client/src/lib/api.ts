@@ -268,6 +268,22 @@ export const api = {
     });
   },
 
+  /* Optional email/phone linking: start proves nothing yet — it attaches the
+   * identifier as UNVERIFIED and sends an OTP. Only verify marks it trusted. */
+  async startLink(method: 'email' | 'phone', value: string): Promise<{ challengeId: string; method: 'email' | 'phone' }> {
+    return request<{ challengeId: string; method: 'email' | 'phone' }>('/users/me/link/start', {
+      method: 'POST',
+      body: { method, value },
+    });
+  },
+
+  async verifyLink(challengeId: string, code: string): Promise<{ ok: boolean }> {
+    return request<{ ok: boolean }>('/users/me/link/verify', {
+      method: 'POST',
+      body: { challengeId, code },
+    });
+  },
+
   async verifyOtp(challengeId: string, code: string): Promise<AuthResponse> {
     const r = await request<AuthResponse>('/auth/otp/verify', {
       method: 'POST',

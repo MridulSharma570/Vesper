@@ -1129,3 +1129,32 @@ button:hover > .story-ring { transform: scale(1.05); }
   animation: fade-up 200ms cubic-bezier(0.2, 0.8, 0.3, 1);
 }
 .admin-row:only-child { border-radius: var(--r-md); }
+
+/* ── Segmented control (email/phone picker in the link dialog) ────────── */
+.seg {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--r-pill);
+  background: var(--glass);
+  border: 1px solid var(--border);
+}
+.seg-btn {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 18px;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  transition: background .18s ease, color .18s ease, box-shadow .18s ease;
+}
+.seg-btn:hover { color: var(--text); }
+.seg-on,
+.seg-btn.seg-on:hover {
+  background: var(--grad-brand);
+  color: var(--text-on-brand);
+  box-shadow: 0 4px 14px rgb(99 102 241 / .35);
+}

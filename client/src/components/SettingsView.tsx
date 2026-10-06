@@ -412,6 +412,7 @@ function SecuritySection(): JSX.Element {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteText, setDeleteText] = useState('');
   const [changeOpen, setChangeOpen] = useState(false);
+  const [linkOpen, setLinkOpen] = useState(false);
 
   async function load(): Promise<void> {
     try {
@@ -435,6 +436,20 @@ function SecuritySection(): JSX.Element {
         <button className="btn btn-secondary btn-sm" onClick={() => setChangeOpen(true)}>Change</button>
       </div>
       {changeOpen && <ChangePasswordModal onClose={() => setChangeOpen(false)} />}
+
+      <div className="row">
+        <div className="row-text">
+          <div className="row-title">Email &amp; phone</div>
+          <div className="row-sub">
+            Optional. Link a contact to sign in with it or recover the account. It is stored
+            hashed and is never shown to anyone else — not even people you chat with.
+          </div>
+        </div>
+        <button className="btn btn-secondary btn-sm" onClick={() => setLinkOpen(true)}>
+          {profile?.identityFingerprints?.length ? 'Manage' : 'Link'}
+        </button>
+      </div>
+      {linkOpen && <LinkContactModal onClose={() => setLinkOpen(false)} />}
 
       <ToggleRow
         icon="bell"
@@ -874,6 +889,147 @@ export function ChangePasswordModal({ forced = false, onClose }: { forced?: bool
           <button className="btn btn-ghost" onClick={() => void signOut()}>
             Sign out instead
           </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────── Optional contact linking ─────────────────────────── */
+
+/**
+ * Two-step dialog for linking an email or phone number.
+ *
+ * Step 1 sends a one-time code to the contact (the server attaches it as
+ * UNVERIFIED until then); step 2 proves control. Nothing about the account
+ * changes until the code is confirmed, so a typo can never hijack someone
+ * else's recovery path. In development the code is printed to the server
+ * console and saved to server/data/outbox — real keys send real messages.
+ */
+function LinkContactModal({ onClose }: { onClose: () => void }): JSX.Element {
+  const notify = useApp((s) => s.notify);
+  const profile = useApp((s) => s.profile);
+  const [method, setMethod] = useState<'email' | 'phone'>('email');
+  const [value, setValue] = useState('');
+  const [challengeId, setChallengeId] = useState<string | null>(null);
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function start(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.startLink(method, value.trim());
+      setChallengeId(r.challengeId);
+      notify('success', method === 'email' ? 'Check your inbox for the Vesper code.' : 'Check your messages for the Vesper code.');
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not start the verification.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirm(): Promise<void> {
+    if (!challengeId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.verifyLink(challengeId, code.trim());
+      const me = await api.me();
+      useApp.setState({ profile: me.profile, settings: me.settings });
+      notify('success', 'Contact linked and verified.');
+      onClose();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'That code was not accepted.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const linked = profile?.identityFingerprints ?? [];
+
+  return (
+    <div className="modal-backdrop" onClick={onClose} role="presentation">
+      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Link email or phone">
+        <div className="between">
+          <h2 className="modal-title">{challengeId ? 'Enter the code' : 'Link a contact'}</h2>
+          <button className="icon-btn" onClick={onClose} aria-label="Close">
+            <Icon name="close" size={17} />
+          </button>
+        </div>
+
+        {linked.length > 0 && (
+          <div className="hint" style={{ marginBottom: 12 }}>
+            Already linked:{' '}
+            {linked.map((f) => (
+              <span key={f.method + f.fingerprint} className="chip" style={{ marginLeft: 6 }}>
+                {f.method} · {f.fingerprint}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {!challengeId ? (
+          <>
+            <p className="hint">
+              Stays optional forever. Vesper stores the contact hashed; nobody — including
+              people you message — can ever see it.
+            </p>
+            <div className="field">
+              <label className="label" htmlFor="link-method">Contact type</label>
+              <div className="seg" role="radiogroup" aria-label="Contact type">
+                <button
+                  role="radio" aria-checked={method === 'email'}
+                  className={`seg-btn${method === 'email' ? ' seg-on' : ''}`}
+                  onClick={() => setMethod('email')}
+                >Email</button>
+                <button
+                  role="radio" aria-checked={method === 'phone'}
+                  className={`seg-btn${method === 'phone' ? ' seg-on' : ''}`}
+                  onClick={() => setMethod('phone')}
+                >Phone</button>
+              </div>
+            </div>
+            <div className="field">
+              <label className="label" htmlFor="link-value">{method === 'email' ? 'Email address' : 'Phone number (with country code)'}</label>
+              <input
+                id="link-value" className="input"
+                type={method === 'email' ? 'email' : 'tel'}
+                autoComplete={method === 'email' ? 'email' : 'tel'}
+                placeholder={method === 'email' ? 'you@example.com' : '+91…'}
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+              />
+            </div>
+            {error && <p role="alert" className="danger" style={{ fontSize: 13 }}>{error}</p>}
+            <button className="btn btn-primary btn-lg btn-block" disabled={busy || value.trim().length < 3} onClick={() => void start()}>
+              {busy ? 'Sending code…' : 'Send verification code'}
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="hint">
+              We sent a 6-digit code to your {method}. It expires in a few minutes.
+              In development builds the code is printed to the server console.
+            </p>
+            <div className="field">
+              <label className="label" htmlFor="link-code">Verification code</label>
+              <input
+                id="link-code" className="input" inputMode="numeric" autoComplete="one-time-code"
+                placeholder="••••••" maxLength={8}
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+              />
+            </div>
+            {error && <p role="alert" className="danger" style={{ fontSize: 13 }}>{error}</p>}
+            <button className="btn btn-primary btn-lg btn-block" disabled={busy || code.trim().length < 4} onClick={() => void confirm()}>
+              {busy ? 'Verifying…' : 'Verify and link'}
+            </button>
+            <button className="btn btn-ghost" onClick={() => { setChallengeId(null); setCode(''); setError(null); }}>
+              Use a different {method}
+            </button>
+          </>
         )}
       </div>
     </div>

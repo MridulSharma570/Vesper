@@ -7,7 +7,7 @@
  * expectation in the commit that changes it.
  *
  *   area A  official admin credentials   -> login must FAIL today (no such account)
- *   area B  email/phone linking          -> endpoints do not exist today (404)
+ *   area B  email/phone linking          -> gated, OTP-proven, fingerprint-only (post-change)
  *   area C  site surface (SEO/legal/404) -> robots/sitemap/og missing today (404)
  *   area D  conversation list paging     -> no cursor support today
  *
@@ -38,11 +38,86 @@ const loginLower = await fetch(`${B}/auth/login`, {
 });
 ok('A4 handle sign-in is case-insensitive', loginLower.status === 200);
 
-/* ── area B: identifier linking endpoints do not exist yet ── */
-const linkStart = await fetch(`${B}/users/me/link/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-ok('B1 /users/me/link/start is 404 today', linkStart.status === 404);
-const linkVerify = await fetch(`${B}/users/me/link/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-ok('B2 /users/me/link/verify is 404 today', linkVerify.status === 404);
+/* ── area B: email/phone linking (commit: feat link endpoints + UI) ──
+ * Post-change expectations: the endpoints exist, are auth-gated, validate
+ * strictly, prove control via a real OTP (read from the dev outbox the console
+ * driver saves), refuse replay/in-use identifiers, and never leak the raw
+ * contact back — only fingerprints. */
+const linkStartAnon = await fetch(`${B}/users/me/link/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+ok('B1 link/start without a session is 401 (route exists, gated)', linkStartAnon.status === 401);
+const linkVerifyAnon = await fetch(`${B}/users/me/link/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+ok('B2 link/verify without a session is 401', linkVerifyAnon.status === 401);
+
+const adminTok = loginBody?.accessToken;
+const badBody = await fetch(`${B}/users/me/link/start`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminTok}` },
+  body: '{}',
+});
+const badBodyJson = await badBody.json().catch(() => null);
+ok('B3 empty body is 400 validation_failed with field issues',
+  badBody.status === 400 && badBodyJson?.error?.code === 'validation_failed' && Array.isArray(badBodyJson?.error?.details?.issues));
+
+/* Throwaway account for the happy path so the official admin stays pristine. */
+const { readFile, readdir } = await import('node:fs/promises');
+const linkUser = await fetch(`${B}/auth/register`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ method: 'device_key', identityKey: `baseline-link-${Date.now()}`, device: dev('baseline-b-link') }),
+});
+const linkUserBody = await linkUser.json();
+const linkEmail = `baseline-${Date.now()}@vesper.test`;
+const start = await fetch(`${B}/users/me/link/start`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${linkUserBody.accessToken}` },
+  body: JSON.stringify({ method: 'email', value: linkEmail }),
+});
+const startBody = await start.json().catch(() => null);
+ok('B4 link/start returns a challengeId for a valid new email', start.status === 200 && !!startBody?.challengeId);
+
+/* The dev console driver saves every "sent" email to server/data/outbox —
+ * read the real code instead of inventing one. */
+async function codeFromOutbox(to) {
+  const dir = new URL('../server/data/outbox/', import.meta.url);
+  const files = (await readdir(dir)).filter((f) => f.endsWith('.json')).sort();
+  for (const f of files.reverse().slice(0, 10)) {
+    const mail = JSON.parse(await readFile(new URL(f, dir), 'utf8'));
+    if (mail.to === to) {
+      const m = String(mail.subject ?? mail.text ?? '').match(/(\d{4,8})/);
+      if (m) return m[1];
+    }
+  }
+  return null;
+}
+const realCode = await codeFromOutbox(linkEmail);
+const wrongCode = await fetch(`${B}/users/me/link/verify`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${linkUserBody.accessToken}` },
+  body: JSON.stringify({ challengeId: startBody?.challengeId, code: '000000' }),
+});
+ok('B5 wrong code is rejected 401', wrongCode.status === 401 && !!realCode);
+const rightCode = await fetch(`${B}/users/me/link/verify`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${linkUserBody.accessToken}` },
+  body: JSON.stringify({ challengeId: startBody?.challengeId, code: realCode }),
+});
+const rightBody = await rightCode.json().catch(() => null);
+ok('B6 the outbox code verifies: ok + profile.verified', rightCode.status === 200 && rightBody?.ok === true && rightBody?.profile?.verified === true);
+ok('B7 response exposes only a fingerprint, never the raw email',
+  Array.isArray(rightBody?.identities) && rightBody.identities.some((i) => i.method === 'email' && i.fingerprint) &&
+  !JSON.stringify(rightBody).includes(linkEmail));
+const replay = await fetch(`${B}/users/me/link/verify`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${linkUserBody.accessToken}` },
+  body: JSON.stringify({ challengeId: startBody?.challengeId, code: realCode }),
+});
+ok('B8 a consumed challenge cannot be replayed', replay.status >= 400 && replay.status < 500);
+const inUse = await fetch(`${B}/users/me/link/start`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminTok}` },
+  body: JSON.stringify({ method: 'email', value: linkEmail }),
+});
+ok('B9 linking an email another account owns is 409', inUse.status === 409);
 
 /* ── area C: site surface missing today ── */
 // Today the SPA fallback swallows these: HTML 200 where machines expect

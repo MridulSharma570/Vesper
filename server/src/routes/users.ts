@@ -19,7 +19,7 @@ import {
   pendingRequests, removeContact, respondToRequest, setAlias, unblockUser,
 } from '../services/contacts.js';
 import { ensureDirectConversation } from '../services/conversations.js';
-import { changePassword, revokeEveryOtherSession } from '../services/auth.js';
+import { addIdentifier, changePassword, confirmVerification, revokeEveryOtherSession } from '../services/auth.js';
 import { listSessions } from '../services/tokens.js';
 import { presenceFor } from '../realtime/hub.js';
 import { audit } from '../services/audit.js';
@@ -177,6 +177,38 @@ export function userRoutes(app: FastifyInstance): void {
     changePassword(auth.userId, body.currentPassword, body.newPassword);
     const revoked = revokeEveryOtherSession(auth.userId, auth.sessionId);
     return reply.send({ ok: true, revokedSessions: revoked });
+  });
+
+  /* ── Optional email/phone linking ────────────────────────────────
+   * Anonymous accounts stay anonymous: linking a contact is opt-in, proves
+   * control via OTP before it counts as verified, and is never shown to other
+   * users (only hashed fingerprints come back from /users/me). An identifier
+   * already claimed by another account is rejected with 409.
+   */
+  app.post('/users/me/link/start', { config: { rateLimit: rateLimitConfig('auth') } }, async (req, reply) => {
+    noStore(reply);
+    const auth = requireAuth(req);
+    const body = z.object({
+      method: z.enum(['email', 'phone']),
+      value: z.string().min(3).max(254),
+    }).strict().parse(await req.body);
+    const challengeId = await addIdentifier(auth.userId, body.method, body.value);
+    return reply.send({ challengeId, method: body.method });
+  });
+
+  app.post('/users/me/link/verify', { config: { rateLimit: rateLimitConfig('auth') } }, async (req, reply) => {
+    noStore(reply);
+    const auth = requireAuth(req);
+    const body = z.object({
+      challengeId: z.string().min(10).max(40),
+      code: z.string().min(4).max(12),
+    }).strict().parse(await req.body);
+    confirmVerification(body.challengeId, body.code, auth.userId);
+    return reply.send({
+      ok: true,
+      profile: toPrivateProfile(getUser(auth.userId)),
+      identities: listIdentityFingerprints(auth.userId),
+    });
   });
 
   app.get('/users/me/sessions', { config: { rateLimit: rateLimitConfig('api') } }, async (req, reply) => {
