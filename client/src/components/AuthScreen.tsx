@@ -14,6 +14,7 @@ import { useState } from 'react';
 import { useApp } from '../store/appStore';
 import { Icon, Logo } from './Icon';
 import { ApiError } from '../lib/api';
+import { navigate, useDocumentMeta } from './PublicSite';
 
 type Mode = 'anonymous' | 'password' | 'otp' | 'recover';
 
@@ -253,7 +254,17 @@ export function AuthScreen(): JSX.Element {
 
 /* ── Sub-components ─────────────────────────────────────────────────── */
 
+/** Intercept the policy links: same-origin SPA navigation, no full reload. */
+function goTo(e: React.MouseEvent<HTMLAnchorElement>): void {
+  e.preventDefault();
+  navigate(e.currentTarget.getAttribute('href') ?? '/');
+}
+
 function Shell({ children }: { children: React.ReactNode }): JSX.Element {
+  useDocumentMeta(
+    'Vesper — anonymous, by design',
+    'No name, no number, no trace. Vesper is the messaging app where your identity is yours alone.',
+  );
   return (
     <div className="auth">
       {/* Brand panel: sells the promise before asking for anything. */}
@@ -273,8 +284,16 @@ function Shell({ children }: { children: React.ReactNode }): JSX.Element {
       </div>
       <div className="auth-card stagger">
         {children}
-        <footer className="hint" style={{ textAlign: 'center', marginTop: 4 }}>
-          By continuing you agree to the Terms and the Privacy Policy.
+        <footer className="hint auth-foot" style={{ textAlign: 'center', marginTop: 4 }}>
+          <span>By continuing you agree to the <a href="/terms" onClick={goTo}>Terms</a> and the <a href="/privacy" onClick={goTo}>Privacy Policy</a>.</span>
+          <nav className="auth-foot-links" aria-label="About Vesper">
+            <a href="/faq" onClick={goTo}>FAQ</a>
+            <a href="/cookies" onClick={goTo}>Cookies</a>
+            <a href="/encryption" onClick={goTo}>Encryption</a>
+            <a href="/terms-of-use" onClick={goTo}>Terms of Use</a>
+            <a href="/license" onClick={goTo}>License</a>
+            <a href="/report" onClick={goTo}>Report abuse</a>
+          </nav>
         </footer>
       </div>
     </div>

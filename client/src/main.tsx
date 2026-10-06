@@ -1,6 +1,7 @@
-import { StrictMode } from 'react';
+import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App, ErrorBoundary } from './App';
+import { PublicSite, currentPath } from './components/PublicSite';
 import './styles/app.css';
 
 /**
@@ -11,14 +12,30 @@ import './styles/app.css';
  *
  * The root element is removed from the DOM only after React has mounted, so a
  * failed bundle leaves the noscript fallback visible instead of a blank page.
+ *
+ * The router lives here, above everything: '/', the app's home, mounts the
+ * signed-in product; every other path mounts the public site (policies, FAQ,
+ * report form, 404). Unknown paths render the not-found view with a truthful
+ * 404 status already served by the API, so crawlers and humans agree.
  */
+function Root(): JSX.Element {
+  const [path, setPath] = useState(currentPath());
+  useEffect(() => {
+    const onPop = (): void => setPath(currentPath());
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+  if (path !== '/') return <PublicSite />;
+  return <App />;
+}
+
 const container = document.getElementById('root');
 if (!container) throw new Error('Root container #root not found');
 
 createRoot(container).render(
   <StrictMode>
     <ErrorBoundary>
-      <App />
+      <Root />
     </ErrorBoundary>
   </StrictMode>,
 );

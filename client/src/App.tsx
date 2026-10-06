@@ -35,6 +35,18 @@ export function App(): JSX.Element {
     void bootstrap();
   }, [bootstrap]);
 
+  // Every screen gets its own document title, so a tab, a screen-reader
+  // announcement and a shared link all say where you actually are.
+  useEffect(() => {
+    document.title = showAdmin
+      ? 'Admin panel · Vesper'
+      : showSettings
+        ? 'Settings · Vesper'
+        : activeConversationId
+          ? 'Conversation · Vesper'
+          : 'Chats · Vesper';
+  }, [showAdmin, showSettings, activeConversationId]);
+
   // Theme: explicit user choice wins, otherwise follow the OS.
   useEffect(() => {
     const theme = settings?.appearance.theme ?? 'system';
