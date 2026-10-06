@@ -1,0 +1,26 @@
+# systemd unit for the Vesper API. Install:
+#   sudo cp deploy/vesper.service /etc/systemd/system/vesper.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now vesper
+[Unit]
+Description=Vesper API (Fastify + SQLite)
+After=network.target
+
+[Service]
+Type=simple
+User=vesper
+WorkingDirectory=/opt/vesper/server
+Environment=NODE_ENV=production
+Environment=PORT=8787
+# Production refuses to boot without these — generate each with:
+#   node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
+EnvironmentFile=/opt/vesper/secrets.env
+ExecStart=/usr/bin/node dist/server/src/index.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/vesper/server/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

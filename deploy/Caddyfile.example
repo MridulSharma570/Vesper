@@ -1,0 +1,8 @@
+# Vesper reverse proxy — automatic HTTPS via Let's Encrypt.
+# Replace the hostname with your DuckDNS/Cloudflare domain, save as
+# /etc/caddy/Caddyfile, then: systemctl reload caddy
+vesper.duckdns.org {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8787
+	# WebSocket upgrades (/realtime) pass through automatically.
+}
