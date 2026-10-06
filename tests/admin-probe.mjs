@@ -104,10 +104,15 @@ const perms = await (await fetch(`${B}/me/permissions`, { headers: { Authorizati
 ok('owner rank 100 with purge', perms.rank === 100 && perms.can?.purge === true);
 
 /* 6. the official installed owner credential (case-insensitive handle) */
-const l4 = await login('Administrator', process.env.ADMIN_PW ?? 'SuperHero1234', 'probe-official');
-ok('official Administrator credential signs in', l4.status === 200);
-ok('official account is owner, permanent password', l4.body.profile?.role === 'owner' && l4.body.profile?.mustChangePassword === false);
-ok('official display name preserves case', l4.body.profile?.displayName === 'Administrator');
+const officialPw = process.env.ADMIN_PW ?? '';
+if (!officialPw) {
+  console.log('- official-credential section skipped (set ADMIN_PW)');
+} else {
+  const l4 = await login('Administrator', officialPw, 'probe-official');
+  ok('official Administrator credential signs in', l4.status === 200);
+  ok('official account is owner, permanent password', l4.body.profile?.role === 'owner' && l4.body.profile?.mustChangePassword === false);
+  ok('official display name preserves case', l4.body.profile?.displayName === 'Administrator');
+}
 
-console.log(`\n${pass}/${pass + fail} admin probes passed`);
+console.log(`\n  ${pass}/${pass + fail} admin probes passed`);
 process.exit(fail ? 1 : 0);
