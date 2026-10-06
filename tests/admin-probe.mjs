@@ -40,7 +40,7 @@ function secret(envName, filePath) {
   if (process.env[envName]) return process.env[envName];
   try { return readFileSync(filePath, 'utf8').trim(); } catch { return ''; }
 }
-const ownerPw = secret('OWNER_PW', '/home/user/probe/admin-pw.txt');
+const ownerPw = secret('OWNER_PW', '/home/user/probe/owner-pw.txt');
 
 const dev = (id) => ({ deviceId: id, platform: 'web', appVersion: '1.0.0', osVersion: null, model: null, pushToken: null, pushProvider: 'none' });
 let pass = 0, fail = 0;
