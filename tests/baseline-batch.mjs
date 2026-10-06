@@ -8,7 +8,7 @@
  *
  *   area A  official admin credentials   -> login must FAIL today (no such account)
  *   area B  email/phone linking          -> gated, OTP-proven, fingerprint-only (post-change)
- *   area C  site surface (SEO/legal/404) -> robots/sitemap/og missing today (404)
+ *   area C  site surface (SEO/legal/404) -> machine types, honest 404, honeypot (post-change)
  *   area D  conversation list paging     -> no cursor support today
  *
  * Usage: node tests/baseline-batch.mjs [baseUrl]
@@ -119,15 +119,44 @@ const inUse = await fetch(`${B}/users/me/link/start`, {
 });
 ok('B9 linking an email another account owns is 409', inUse.status === 409);
 
-/* ── area C: site surface missing today ── */
-// Today the SPA fallback swallows these: HTML 200 where machines expect
-// text/plain, application/xml and image/png. That is the bug being fixed.
+/* ── area C: crawler/share/404 surface (commit: feat site surface) ──
+ * Post-change expectations: machines get machine formats, humans get an
+ * honest 404 shell, the honeypot swallows bots silently, and the served shell
+ * carries share metadata with no analytics unless the deployment opts in. */
 const robots = await fetch(`${B}/robots.txt`);
-ok('C1 /robots.txt today returns HTML (wrong type)', robots.status === 200 && (robots.headers.get('content-type') ?? '').includes('text/html'));
+const robotsText = robots.status === 200 ? await robots.text() : '';
+ok('C1 /robots.txt is text/plain, allows public pages, points at the sitemap',
+  robots.status === 200 && (robots.headers.get('content-type') ?? '').includes('text/plain') &&
+  robotsText.includes('User-agent: *') && robotsText.includes('Sitemap:'));
 const sitemap = await fetch(`${B}/sitemap.xml`);
-ok('C2 /sitemap.xml today returns HTML (wrong type)', sitemap.status === 200 && (sitemap.headers.get('content-type') ?? '').includes('text/html'));
+const sitemapText = sitemap.status === 200 ? await sitemap.text() : '';
+ok('C2 /sitemap.xml is application/xml listing every public page',
+  sitemap.status === 200 && (sitemap.headers.get('content-type') ?? '').includes('application/xml') &&
+  ['/privacy', '/faq', '/terms', '/cookies', '/encryption', '/license', '/report'].every((pp) => sitemapText.includes(`<loc>${new URL(B).origin}${pp}</loc>`)));
 const og = await fetch(`${B}/og-image.png`);
-ok('C3 /og-image.png today returns HTML (wrong type)', og.status === 200 && (og.headers.get('content-type') ?? '').includes('text/html'));
+const ogBuf = new Uint8Array(await og.arrayBuffer());
+ok('C3 /og-image.png is a real PNG', og.status === 200 &&
+  (og.headers.get('content-type') ?? '').includes('image/png') &&
+  ogBuf[0] === 0x89 && ogBuf[1] === 0x50 && ogBuf[2] === 0x4e && ogBuf[3] === 0x47);
+const missing = await fetch(`${B}/definitely-not-a-page`, { headers: { Accept: 'text/html' } });
+const missingText = missing.status === 404 ? await missing.text() : '';
+ok('C4 unknown paths answer 404 (not 200) with the app shell for browsers',
+  missing.status === 404 && missingText.includes('<div id="root"></div>'));
+const shell = await (await fetch(`${B}/`)).text();
+ok('C5 served shell carries share metadata and no analytics by default',
+  shell.includes('og:image') && shell.includes('twitter:card') && !shell.includes('googletagmanager') && !shell.includes('VESPER_GA'));
+const honeypot = await fetch(`${B}/public/reports`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ reason: 'spam', details: 'Automated blast body body body body body.', website: 'http://spam.example' }),
+});
+ok('C6 honeypot-filled report is accepted silently (201), never stored', honeypot.status === 201);
+const shortReport = await fetch(`${B}/public/reports`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ reason: 'spam', details: 'short' }),
+});
+ok('C7 thin report bodies are rejected 400', shortReport.status === 400);
 
 /* ── area D: conversation list has no cursor paging today ──
  * Reuses the owner token from area A: the auth rate limiter is a feature, and
