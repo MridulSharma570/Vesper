@@ -35,6 +35,8 @@ interface AppState {
 
   /* data */
   conversations: ConversationView[];
+  conversationsCursor: string | null;
+  loadingMoreConversations: boolean;
   activeConversationId: string | null;
   messages: Record<string, Message[]>;
   cursors: Record<string, string | null>;
@@ -63,6 +65,8 @@ interface AppState {
   signOut: (everywhere?: boolean) => Promise<void>;
 
   loadConversations: () => Promise<void>;
+  /** Fetch the next page of the conversation list; null cursor when done. */
+  loadMoreConversations: () => Promise<void>;
   openConversation: (id: string) => Promise<void>;
   openDmWith: (userId: string) => Promise<string>;
   createGroup: (title: string, memberIds: string[]) => Promise<string>;
@@ -96,6 +100,8 @@ export const useApp = create<AppState>((set, get) => ({
   flags: null,
   socketStatus: 'idle',
   conversations: [],
+  conversationsCursor: null as string | null,
+  loadingMoreConversations: false,
   activeConversationId: null,
   messages: {},
   cursors: {},
@@ -201,10 +207,29 @@ export const useApp = create<AppState>((set, get) => ({
 
   async loadConversations() {
     try {
-      const { conversations } = await api.conversations();
-      set({ conversations: conversations as ConversationView[] });
+      const page = await api.conversations();
+      set({ conversations: page.conversations as ConversationView[], conversationsCursor: page.nextCursor });
     } catch (e) {
       get().notify('error', messageOf(e, 'Could not load conversations'));
+    }
+  },
+
+  async loadMoreConversations() {
+    const cursor = get().conversationsCursor;
+    if (!cursor || get().loadingMoreConversations) return;
+    set({ loadingMoreConversations: true });
+    try {
+      const page = await api.conversations(cursor);
+      const seen = new Set(get().conversations.map((c) => c.conversation.id));
+      const fresh = (page.conversations as ConversationView[]).filter((c) => !seen.has(c.conversation.id));
+      set({
+        conversations: [...get().conversations, ...fresh],
+        conversationsCursor: page.nextCursor,
+      });
+    } catch (e) {
+      get().notify('error', messageOf(e, 'Could not load older conversations'));
+    } finally {
+      set({ loadingMoreConversations: false });
     }
   },
 

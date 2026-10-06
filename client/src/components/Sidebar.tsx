@@ -21,7 +21,10 @@ import { Icon, Logo } from './Icon';
 import { displayHandle, formatListTime, initials, previewOf } from '../lib/format';
 
 export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }): JSX.Element {
-  const { conversations, profile, socketStatus, activeConversationId, openConversation, searchUsers, searchResults, contacts } = useApp();
+  const {
+    conversations, profile, socketStatus, activeConversationId, openConversation,
+    searchUsers, searchResults, contacts, conversationsCursor, loadingMoreConversations, loadMoreConversations,
+  } = useApp();
   const myId = profile?.id ?? '';
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
@@ -109,15 +112,27 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }): JSX
         ) : sorted.length === 0 ? (
           <EmptyConversations />
         ) : (
-          sorted.map((c) => (
-            <ConversationRow
-              key={c.conversation.id}
-              view={c}
-              active={c.conversation.id === activeConversationId}
-              onOpen={() => void openConversation(c.conversation.id)}
-              myId={myId}
-            />
-          ))
+          <>
+            {sorted.map((c) => (
+              <ConversationRow
+                key={c.conversation.id}
+                view={c}
+                active={c.conversation.id === activeConversationId}
+                onOpen={() => void openConversation(c.conversation.id)}
+                myId={myId}
+              />
+            ))}
+            {conversationsCursor && (
+              <button
+                className="btn btn-ghost btn-block"
+                style={{ margin: '10px 14px', width: 'calc(100% - 28px)' }}
+                disabled={loadingMoreConversations}
+                onClick={() => void loadMoreConversations()}
+              >
+                {loadingMoreConversations ? 'Loading…' : 'Load older conversations'}
+              </button>
+            )}
+          </>
         )}
       </div>
     </aside>

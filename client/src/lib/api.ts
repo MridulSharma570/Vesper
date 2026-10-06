@@ -337,7 +337,10 @@ export const api = {
   unblockUser: (userId: string) => request<{ ok: boolean }>(`/contacts/${userId}/block`, { method: 'DELETE' }),
 
   /* conversations */
-  conversations: () => request<{ conversations: ConversationView[] }>('/conversations'),
+  conversations: (cursor?: string | null) =>
+    request<{ conversations: ConversationView[]; nextCursor: string | null }>(
+      `/conversations?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+    ),
   openDm: (userId: string) =>
     request<{ conversation: unknown }>(`/users/${userId}/conversation`, { method: 'POST' }),
   createGroup: (title: string, memberIds: string[]) =>

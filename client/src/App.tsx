@@ -127,7 +127,6 @@ function MobileNav({ pane, onPane, onSettings }: {
   onPane: (p: 'list' | 'chat') => void;
   onSettings: () => void;
 }): JSX.Element {
-  const activeConversationId = useApp((s) => s.activeConversationId);
   const setActiveConversation = useApp((s) => s.setActiveConversation);
   const unread = useApp((s) => s.conversations.reduce((n, c) => n + (c.unreadCount ?? 0), 0));
 
@@ -150,16 +149,9 @@ function MobileNav({ pane, onPane, onSettings }: {
         </span>
         Chats
       </button>
-      <button
-        data-active={pane === 'chat'}
-        onClick={() => { if (activeConversationId) onPane('chat'); }}
-        aria-label="Open conversation"
-        disabled={!activeConversationId}
-        style={{ opacity: activeConversationId ? 1 : 0.45 }}
-      >
-        <Icon name="chat" size={22} />
-        Conversation
-      </button>
+      {/* Opening a conversation already switches the pane on narrow screens,
+          so a second tab pointing at "the chat" only added confusion. Three
+          destinations, one raised action: read, start, configure. */}
       <button onClick={onSettings} aria-label="Settings">
         <Icon name="settings" size={22} />
         Settings
