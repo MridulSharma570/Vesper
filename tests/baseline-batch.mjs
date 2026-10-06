@@ -158,15 +158,65 @@ const shortReport = await fetch(`${B}/public/reports`, {
 });
 ok('C7 thin report bodies are rejected 400', shortReport.status === 400);
 
-/* ── area D: conversation list has no cursor paging today ──
- * Reuses the owner token from area A: the auth rate limiter is a feature, and
- * a test suite must not burn its budget registering throwaway accounts. */
+/* ── area D: cursor-paged conversation list (commit: perf batched paging) ──
+ * Reuses the owner token from area A for reads; seeds three fresh throwaway
+ * accounts that open DMs with the owner so paging has something to page. */
 const tok = loginBody?.accessToken ?? '';
 ok('D0 token from area A is reusable for reads', !!tok);
-const convs = await fetch(`${B}/conversations?limit=2`, { headers: { Authorization: `Bearer ${tok}` } });
+/* Seed a paging fixture among throwaways: the owner's privacy settings
+ * (strangers cannot DM) must stay strict, so the list under test belongs to
+ * throwaway #0, which opens DMs with #1..#3. */
+const pagers = [];
+for (let i = 0; i < 4; i++) {
+  const reg = await fetch(`${B}/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ method: 'device_key', identityKey: `baseline-page-${Date.now()}-${i}`, device: dev(`baseline-d-${i}`) }),
+  });
+  const regBody = reg.status === 201 || reg.status === 200 ? await reg.json() : null;
+  if (regBody?.accessToken && regBody?.profile?.id) pagers.push(regBody);
+}
+for (const other of pagers.slice(1)) {
+  // Mirror the real flow: contact request, accept, then the DM exists.
+  await fetch(`${B}/contacts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${pagers[0].accessToken}` },
+    body: JSON.stringify({ userId: other.profile.id }),
+  });
+  const pend = await (await fetch(`${B}/contacts`, { headers: { Authorization: `Bearer ${other.accessToken}` } })).json();
+  const incoming = (pend.pending ?? []).find((c) => c.userId === pagers[0].profile.id);
+  if (incoming) {
+    await fetch(`${B}/contacts/respond`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${other.accessToken}` },
+      body: JSON.stringify({ requestId: incoming.id, accept: true }),
+    });
+  }
+  await fetch(`${B}/users/${other.profile.id}/conversation`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${pagers[0].accessToken}` },
+  });
+}
+const pageTok = pagers[0]?.accessToken ?? tok;
+const convs = await fetch(`${B}/conversations?limit=2`, { headers: { Authorization: `Bearer ${pageTok}` } });
 const convBody = convs.status === 200 ? await convs.json() : null;
-ok('D1 /conversations returns a list today', convs.status === 200 && Array.isArray(convBody?.conversations));
-ok('D2 /conversations has no nextCursor field today', convBody !== null && !('nextCursor' in convBody));
+ok('D1 /conversations returns a list', convs.status === 200 && Array.isArray(convBody?.conversations));
+ok('D2 a full page carries a nextCursor', convBody !== null && typeof convBody.nextCursor === 'string' && convBody.conversations.length === 2);
+const page2 = await fetch(`${B}/conversations?limit=2&cursor=${encodeURIComponent(convBody?.nextCursor ?? '')}`, { headers: { Authorization: `Bearer ${pageTok}` } });
+const page2Body = page2.status === 200 ? await page2.json() : null;
+const ids1 = new Set((convBody?.conversations ?? []).map((c) => c.conversation.id));
+const ids2 = (page2Body?.conversations ?? []).map((c) => c.conversation.id);
+ok('D3 the cursor returns the next disjoint page', page2.status === 200 && ids2.length === 2 && ids2.every((id) => !ids1.has(id)));
+/* Walk to the end: paging must terminate with a null cursor. */
+let cursor = page2Body?.nextCursor ?? null;
+let walks = 0;
+while (cursor && walks < 12) {
+  const nx = await fetch(`${B}/conversations?limit=50&cursor=${encodeURIComponent(cursor)}`, { headers: { Authorization: `Bearer ${pageTok}` } });
+  const nxBody = nx.status === 200 ? await nx.json() : null;
+  cursor = nxBody?.nextCursor ?? null;
+  walks++;
+}
+ok('D4 paging terminates with nextCursor null', cursor === null);
 
 /* ── area E: password change already exists (must keep passing) ── */
 const noAuth = await fetch(`${B}/users/me/password`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentPassword: 'x', newPassword: 'y' }) });
