@@ -1,0 +1,12 @@
+{
+  "name": "vesper-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Vesper Windows/macOS/Linux shell (Electron)",
+  "main": "electron/main.ts",
+  "scripts": {
+    "start": "tsx electron/main.ts",
+    "dist": "electron-builder --config electron-builder.yml"
+  },
+  "devDependencies": {}
+}

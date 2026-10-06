@@ -96,9 +96,14 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
+/* Native shells (Capacitor, Electron) load the bundle from their own origin,
+ * so the API base must be injectable at build time. The web build leaves it
+ * empty and stays perfectly same-origin — no CORS surface at all. */
+const API_BASE: string = (import.meta.env.VITE_VESPER_API as string | undefined)?.replace(/\/$/, '') ?? '';
+
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const doFetch = async (token: string | null): Promise<Response> =>
-    fetch(path, {
+    fetch(`${API_BASE}${path}`, {
       method: opts.method ?? 'GET',
       headers: {
         ...(opts.body !== undefined ? { 'Content-Type': 'application/json' } : {}),

@@ -1,0 +1,17 @@
+appId: app.vesper.anonymous
+productName: Vesper
+directories:
+  output: release
+files:
+  - electron/**
+  - ../client/dist/**
+win:
+  targets:
+    - nsis
+    - appx
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+appx:
+  identityName: MridulSharma.Vesper
+  publisherDisplayName: Mridul Sharma

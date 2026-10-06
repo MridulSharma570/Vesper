@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Vesper</string>
+    <string name="title_activity_main">Vesper</string>
+    <string name="package_name">app.vesper.anonymous</string>
+    <string name="custom_url_scheme">app.vesper.anonymous</string>
+</resources>
