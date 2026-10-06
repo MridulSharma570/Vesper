@@ -71,10 +71,12 @@ ok('E1 password change requires auth today (401)', noAuth.status === 401);
 console.log(`\n${pass}/${pass + fail} baseline assertions passed (today's behaviour)`);
 process.exit(fail ? 1 : 0);
 
-/* ── area F: malformed bodies 500 today (zod errors unmapped) ── */
+/* ── area F: malformed bodies are a client error, mapped to 400 ── */
 const malformed = await fetch(`${B}/auth/register`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ method: 'device_key', identityKey: 'baseline-f1', device: { deviceId: 'short', platform: 'web', appVersion: '1.0.0', osVersion: null, model: null, pushToken: null, pushProvider: 'none' } }),
 });
-ok('F1 malformed register body 500s today (should be 400)', malformed.status === 500);
+const malformedBody = malformed.status === 400 ? await malformed.json() : null;
+ok('F1 malformed register body returns 400', malformed.status === 400);
+ok('F2 400 carries field-level issues', !!malformedBody?.error?.details?.issues?.length);

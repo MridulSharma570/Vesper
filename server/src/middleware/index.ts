@@ -157,10 +157,25 @@ export function errorHandler(
   }
 
   // Fastify's own validation errors (zod/schema failures, bad JSON).
-  const anyErr = error as { validation?: unknown; statusCode?: number; message?: string; code?: string };
+  const anyErr = error as { validation?: unknown; statusCode?: number; message?: string; code?: string; name?: string; issues?: unknown };
   if (anyErr?.validation) {
     void reply.status(400).send({
       error: { code: 'validation_failed', message: 'Some of the data you sent is not valid', details: { validation: anyErr.validation } },
+    });
+    return;
+  }
+
+  // Handlers parse bodies with zod directly; a rejected schema is the client's
+  // mistake, not a server fault. Without this mapping a typo'd field burns a
+  // 500, an audit row and an operator's patience.
+  if (anyErr?.name === 'ZodError' && anyErr.issues) {
+    void reply.status(400).send({
+      error: {
+        code: 'validation_failed',
+        message: 'Some of the data you sent is not valid',
+        details: { issues: (anyErr.issues as { path?: (string | number)[]; message?: string }[])
+          .map((i) => ({ field: (i.path ?? []).join('.') || '(root)', message: i.message })) },
+      },
     });
     return;
   }
