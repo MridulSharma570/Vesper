@@ -9,7 +9,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
   addMembers, buildConversationView, createGroup, directCounterpart, ensureDirectConversation,
-  ensureSelfConversation, getConversation, leaveConversation, listConversations, listMemberIds,
+  ensureSelfConversation, getConversation, leaveConversation, listConversations, listConversationsPage, listMemberIds,
   listMemberProfiles, removeMember, requireConversationRole, requireMembership, setMemberPrefs,
   setMemberRole, toConversation, unreadCount, updateConversation,
 } from '../services/conversations.js';
@@ -46,12 +46,15 @@ export function conversationRoutes(app: FastifyInstance): void {
   app.get('/conversations', { config: { rateLimit: rateLimitConfig('api') } }, async (req, reply) => {
     shortCache(reply, 5);
     const auth = requireAuth(req);
-    const q = req.query as { includeArchived?: string; limit?: string };
-    const items = listConversations(auth.userId, {
+    const q = req.query as { includeArchived?: string; limit?: string; cursor?: string };
+    const page = listConversationsPage(auth.userId, {
       includeArchived: q.includeArchived === 'true',
-      limit: Math.min(Number(q.limit ?? 100) || 100, 300),
+      limit: Math.min(Number(q.limit ?? 50) || 50, 100),
+      cursor: q.cursor,
     });
-    return { conversations: items };
+    // `conversations` keeps its old shape for existing clients; nextCursor is
+    // additive and null when the whole list fit in one page.
+    return { conversations: page.items, nextCursor: page.nextCursor };
   });
 
   app.get('/conversations/unread-count', { config: { rateLimit: rateLimitConfig('api') } }, async (req, reply) => {

@@ -482,8 +482,49 @@ export function unreadCount(userId: string, conversationId: string): number {
  * The conversation list, newest activity first, pinned first within that.
  * Excludes rows the viewer deleted "for me" and archived chats unless asked.
  */
-export function listConversations(userId: string, opts: { includeArchived?: boolean; limit?: number } = {}): ConversationView[] {
-  const limit = Math.min(opts.limit ?? 100, 300);
+export interface ConversationPage {
+  items: ConversationView[];
+  nextCursor: string | null;
+}
+
+/**
+ * Cursor for keyset pagination over the pinned-then-recency order. Opaque to
+ * clients; `${pinned}|${activityAt}|${id}` inside.
+ */
+function encodeCursor(pinned: number, activity: number, id: string): string {
+  return `${pinned}|${activity}|${id}`;
+}
+
+function decodeCursor(cursor: string | null | undefined): { pinned: number; activity: number; id: string } | null {
+  if (!cursor) return null;
+  const [p, t, id] = cursor.split('|');
+  const pinned = Number(p);
+  const activity = Number(t);
+  if (!id || Number.isNaN(pinned) || Number.isNaN(activity)) return null;
+  return { pinned, activity, id };
+}
+
+/**
+ * The conversation list, paginated and batched.
+ *
+ * The old implementation ran three extra queries per row (member profiles,
+ * last message, unread count) — a 100-item list meant 300+ round trips into
+ * SQLite and a perceptible stall on every cold open. This version runs four
+ * queries total regardless of page size: the page itself, then one batched
+ * query each for last messages (window function), unread counts (join back
+ * into the member rows' last_read_id) and member profiles.
+ *
+ * Pagination is keyset over (pinned DESC, activity DESC, id DESC), so deep
+ * pages cost the same as the first one and a new message arriving cannot
+ * shift the window under a reader the way OFFSET would.
+ */
+export function listConversationsPage(
+  userId: string,
+  opts: { includeArchived?: boolean; limit?: number; cursor?: string | null } = {},
+): ConversationPage {
+  const limit = Math.min(opts.limit ?? 50, 100);
+  const after = decodeCursor(opts.cursor);
+
   const rows = db()
     .prepare(
       `SELECT c.*, m.*, m.conversation_id AS cid
@@ -491,12 +532,94 @@ export function listConversations(userId: string, opts: { includeArchived?: bool
          JOIN conversations c ON c.id = m.conversation_id
         WHERE m.user_id = ? AND m.left_at IS NULL AND c.state = 'active'
           ${opts.includeArchived ? '' : 'AND m.archived = 0'}
-        ORDER BY m.pinned DESC, COALESCE(c.last_message_at, c.created_at) DESC
+          ${after ? 'AND (m.pinned, COALESCE(c.last_message_at, c.created_at), c.id) < (?, ?, ?)' : ''}
+        ORDER BY m.pinned DESC, COALESCE(c.last_message_at, c.created_at) DESC, c.id DESC
         LIMIT ?`,
     )
-    .all(userId, limit) as (ConversationRow & MemberRow)[];
+    .all(...(after ? [userId, after.pinned, after.activity, after.id, limit + 1] : [userId, limit + 1])) as (ConversationRow & MemberRow & { cid: string })[];
 
-  return rows.map((row) => buildView(row, row, userId)).filter((v): v is ConversationView => v !== null);
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  if (page.length === 0) return { items: [], nextCursor: null };
+
+  const ids = page.map((r) => r.cid);
+  const inList = ids.map(() => '?').join(',');
+
+  /* Latest visible message per conversation, one query. */
+  const lastRows = db()
+    .prepare(
+      `SELECT * FROM (
+         SELECT messages.*, ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY id DESC) AS rn
+           FROM messages
+          WHERE conversation_id IN (${inList}) AND deleted_at IS NULL
+            AND NOT EXISTS (SELECT 1 FROM message_deletions d WHERE d.message_id = messages.id AND d.user_id = ?)
+       ) WHERE rn = 1`,
+    )
+    .all(...ids, userId) as Record<string, unknown>[];
+  const lastByConv = new Map(lastRows.map((r) => [String(r.conversation_id), r]));
+
+  /* Unread counts, one query: message ids past each member row's last_read_id. */
+  const unreadRows = db()
+    .prepare(
+      `SELECT m.conversation_id AS cid, COUNT(msg.id) AS c
+         FROM conversation_members m
+         LEFT JOIN messages msg
+           ON msg.conversation_id = m.conversation_id
+          AND msg.deleted_at IS NULL AND msg.sender_id != m.user_id
+          AND msg.id > COALESCE(m.last_read_id, '')
+        WHERE m.user_id = ? AND m.conversation_id IN (${inList})
+        GROUP BY m.conversation_id`,
+    )
+    .all(userId, ...ids) as { cid: string; c: number }[];
+  const unreadByConv = new Map(unreadRows.map((r) => [r.cid, r.c]));
+
+  /* Member profiles, one query, grouped client-side (same 512 cap as before). */
+  const memberRows = db()
+    .prepare(
+      `SELECT m.conversation_id AS cid, u.* FROM users u
+         JOIN conversation_members m ON m.user_id = u.id
+        WHERE m.conversation_id IN (${inList}) AND m.left_at IS NULL
+        ORDER BY m.joined_at`,
+    )
+    .all(...ids) as (UserRowLike & { cid: string })[];
+  const membersByConv = new Map<string, UserRowLike[]>();
+  for (const r of memberRows) {
+    const list = membersByConv.get(r.cid) ?? [];
+    if (list.length < 512) list.push(r);
+    membersByConv.set(r.cid, list);
+  }
+
+  const items = page
+    .map((row) => {
+      try {
+        const conversation = toConversation(row);
+        return {
+          conversation,
+          member: toMember(row),
+          members: (membersByConv.get(row.cid) ?? []).map((u) => toPublicProfile(u, userId)),
+          lastMessage: (() => {
+            const last = lastByConv.get(row.cid);
+            return last ? serializeMessage(last, userId) : null;
+          })(),
+          unreadCount: unreadByConv.get(row.cid) ?? 0,
+          typing: [],
+        } as ConversationView;
+      } catch {
+        return null;
+      }
+    })
+    .filter((v): v is ConversationView => v !== null);
+
+  const tail = page[page.length - 1];
+  if (!tail) return { items, nextCursor: null };
+  const nextCursor = hasMore
+    ? encodeCursor(Number(tail.pinned ?? 0), Number(tail.last_message_at ?? tail.created_at), tail.cid)
+    : null;
+  return { items, nextCursor };
+}
+
+export function listConversations(userId: string, opts: { includeArchived?: boolean; limit?: number } = {}): ConversationView[] {
+  return listConversationsPage(userId, opts).items;
 }
 
 export function buildConversationView(conversationId: string, userId: string): ConversationView | null {
