@@ -242,14 +242,38 @@ export async function buildServer() {
 
   await app.register(cors, {
     origin: (origin, cb) => {
-      // Same-origin and non-browser clients (no Origin header) are always fine.
+      // Requests without an Origin header are always allowed.
       if (!origin) return cb(null, true);
+
       const allowed = config.server.corsOrigins;
-      if (allowed.includes('*') || allowed.includes(origin)) return cb(null, true);
-      // The e2b preview host is per-sandbox, so match its shape rather than a
-      // fixed string.
-      if (/^https:\/\/\d+-[a-z0-9]+\.e2b\.app$/.test(origin)) return cb(null, true);
-      cb(new Error('Origin not allowed by CORS'), false);
+
+      // Explicitly configured origins.
+      if (allowed.includes('*') || allowed.includes(origin)) {
+        return cb(null, true);
+      }
+
+      // Render's public service hostname.
+      const renderHost = process.env.RENDER_EXTERNAL_HOSTNAME;
+      if (renderHost && origin === `https://${renderHost}`) {
+        return cb(null, true);
+      }
+
+      // Vesper's configured public URL.
+      if (config.app.publicUrl && origin === config.app.publicUrl.replace(/\/$/, '')) {
+        return cb(null, true);
+      }
+
+      // Render deployment URL fallback.
+      if (origin === 'https://vesper-yl0s.onrender.com') {
+        return cb(null, true);
+      }
+
+      // E2B preview environments.
+      if (/^https:\/\/\d+-[a-z0-9]+\.e2b\.app$/.test(origin)) {
+        return cb(null, true);
+      }
+
+      cb(new Error(`Origin not allowed by CORS: ${origin}`), false);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
